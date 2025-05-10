@@ -160,8 +160,9 @@ void filtro_laplaciano(unsigned char **input, unsigned char **output, int height
     }
 
     // Liberar máscara
-    for(i = 0; i < mask_size; i++)
+    for(i = 0; i < mask_size; i++){
         free(mask[i]);
+    }
     free(mask);
 }
 
