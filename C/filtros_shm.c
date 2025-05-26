@@ -61,6 +61,55 @@ void bubble_sort(unsigned char *arr, int size)
     }
 }
 
+// void filtro_mediana(unsigned char *memoria_compartilhada, int height, int width, int n_mask, int id_seq, int n_proc)
+// {
+//     int pixel_central = n_mask / 2;
+//     int i, j, m, n;
+
+//     int size_mask_array = n_mask * n_mask;
+//     unsigned char *mask_array = (unsigned char *)malloc(size_mask_array * sizeof(unsigned char));
+
+//     unsigned char *saida = (unsigned char *)malloc(height*width*sizeof(unsigned char));
+
+//     // Lendo as linhas da imagem. Começando em i = pixel_central para garantir os valores ao redor do pixel
+//     for (i = pixel_central + id_seq; i < height - pixel_central; i += n_proc)
+//     {
+//         // Lendo as colunas da imagem. Começando em j = pixel_central para garantir os valores ao redor do pixel
+//         for (j = pixel_central; j < width - pixel_central; j++)
+//         {
+//             int k = 0;
+//             // Obtendo todos os valores dos pixels da mask
+//             for (m = 0; m < n_mask; m++)
+//             {
+//                 for (n = 0; n < n_mask; n++)
+//                 {
+//                     // convertendo a vizinhança do pixel atual da imagem para a mask
+//                     // i = index da linha real da imagem; j = index da coluna real da imagem
+//                     // m = index da linha da mask; n = index da coluna da mask
+//                     int y = i + m - pixel_central;
+//                     int x = j + n - pixel_central;
+//                     mask_array[k++] = memoria_compartilhada[y * width + x]; // armazenando os pixels no array mask
+//                 }
+//             }
+//             bubble_sort(mask_array, size_mask_array);       // ordena os valores armazenados
+//             saida[i * width + j] = mask_array[size_mask_array / 2]; // obtém o valor mediano
+//         }
+//     }
+
+//     // for(i=0; i< height*width;i++){
+//     //     memoria_compartilhada[i] = saida[i];
+//     // }
+
+//     for (i = pixel_central + id_seq; i < height - pixel_central; i += n_proc) {
+//         for (j = pixel_central; j < width - pixel_central; j++) {
+//             memoria_compartilhada[i * width + j] = saida[i * width + j];
+//         }
+//     }
+
+//     free(saida);
+//     free(mask_array);
+// }
+
 void filtro_mediana(unsigned char *memoria_compartilhada, int height, int width, int n_mask, int id_seq, int n_proc)
 {
     int pixel_central = n_mask / 2;
@@ -68,47 +117,48 @@ void filtro_mediana(unsigned char *memoria_compartilhada, int height, int width,
 
     int size_mask_array = n_mask * n_mask;
     unsigned char *mask_array = (unsigned char *)malloc(size_mask_array * sizeof(unsigned char));
+    unsigned char *saida = (unsigned char *)malloc(height * width * sizeof(unsigned char));
 
-    unsigned char *saida = (unsigned char *)malloc(height*width*sizeof(unsigned char));
+    // Definindo blocos de linhas válidas para cada processo
+    int linhas_validas = height - 2 * pixel_central;
+    int bloco = linhas_validas / n_proc;
+    int resto = linhas_validas % n_proc;
 
-    // Lendo as linhas da imagem. Começando em i = pixel_central para garantir os valores ao redor do pixel
-    for (i = pixel_central + id_seq; i < height - pixel_central; i += n_proc)
-    {
-        // Lendo as colunas da imagem. Começando em j = pixel_central para garantir os valores ao redor do pixel
-        for (j = pixel_central; j < width - pixel_central; j++)
-        {
+    // Distribui o restante entre os primeiros processos
+    int inicio = pixel_central + id_seq * bloco + (id_seq < resto ? id_seq : resto);
+    int linhas_do_processo = bloco + (id_seq < resto ? 1 : 0);
+    int fim = inicio + linhas_do_processo;
+
+    for (i = inicio; i < fim; i++) {
+        for (j = pixel_central; j < width - pixel_central; j++) {
             int k = 0;
-            // Obtendo todos os valores dos pixels da mask
-            for (m = 0; m < n_mask; m++)
-            {
-                for (n = 0; n < n_mask; n++)
-                {
-                    // convertendo a vizinhança do pixel atual da imagem para a mask
-                    // i = index da linha real da imagem; j = index da coluna real da imagem
-                    // m = index da linha da mask; n = index da coluna da mask
+
+            // Preenche a máscara com os valores da vizinhança
+            for (m = 0; m < n_mask; m++) {
+                for (n = 0; n < n_mask; n++) {
                     int y = i + m - pixel_central;
                     int x = j + n - pixel_central;
-                    mask_array[k++] = memoria_compartilhada[y * width + x]; // armazenando os pixels no array mask
+                    mask_array[k++] = memoria_compartilhada[y * width + x];
                 }
             }
-            bubble_sort(mask_array, size_mask_array);       // ordena os valores armazenados
-            saida[i * width + j] = mask_array[size_mask_array / 2]; // obtém o valor mediano
+
+            // Ordena a máscara e pega o valor mediano
+            bubble_sort(mask_array, size_mask_array);
+            saida[i * width + j] = mask_array[size_mask_array / 2];
         }
     }
 
-    // for(i=0; i< height*width;i++){
-    //     memoria_compartilhada[i] = saida[i];
-    // }
-
-    for (i = pixel_central + id_seq; i < height - pixel_central; i += n_proc) {
+    // Escreve de volta na memória compartilhada apenas os pixels modificados
+    for (i = inicio; i < fim; i++) {
         for (j = pixel_central; j < width - pixel_central; j++) {
             memoria_compartilhada[i * width + j] = saida[i * width + j];
         }
     }
 
-    free(saida);
     free(mask_array);
+    free(saida);
 }
+
 
 /*------------------------------------------------------------------*/
 
@@ -168,72 +218,122 @@ void gerar_laplace_mask(int size, int **mask)
 
 /*------------------------------------------------------------------*/
 
+// void filtro_laplaciano(unsigned char *memoria_compartilhada, int height, int width, int mask_size, int id_seq, int n_proc)
+// {
+//     int i, j, m, n;
+//     int **mask;
+//     int center = mask_size / 2;
+
+//     // Alocar máscara
+//     mask = (int **)malloc(mask_size * sizeof(int *));
+//     for (i = 0; i < mask_size; i++)
+//         mask[i] = (int *)malloc(mask_size * sizeof(int));
+
+//     gerar_laplace_mask(mask_size, mask);
+
+//     unsigned char *saida = (unsigned char *)malloc(height*width*sizeof(unsigned char));
+
+//     // Aplicar convolução
+//     for (i = center + id_seq; i < height - center; i+=n_proc)
+//     {
+//         for (j = center; j < width - center; j++)
+//         {
+//             int sum = 0;
+//             for (m = 0; m < mask_size; m++)
+//             {
+//                 for (n = 0; n < mask_size; n++)
+//                 {
+//                     int y = i + m - center;
+//                     int x = j + n - center;
+//                     sum += memoria_compartilhada[y * width + x] * mask[m][n];
+//                 }
+//             }
+//             if (sum < 0)
+//                 sum = 0;
+//             if (sum > 255)
+//                 sum = 255;
+//             saida[i * width + j] = (unsigned char)sum;
+//         }
+//     }
+
+//     // Copiar as linhas processadas de volta para memória compartilhada
+//     for (i = center + id_seq; i < height - center; i += n_proc)
+//     {
+//         for (j = center; j < width - center; j++)
+//         {
+//             memoria_compartilhada[i * width + j] = saida[i * width + j];
+//         }
+//     }
+
+//     // Liberar memória
+//     free(saida);
+
+//     // Liberar máscara
+//     for (i = 0; i < mask_size; i++)
+//     {
+//         free(mask[i]);
+//     }
+
+//     free(mask);
+// }
+
+
 void filtro_laplaciano(unsigned char *memoria_compartilhada, int height, int width, int mask_size, int id_seq, int n_proc)
 {
     int i, j, m, n;
-    int **mask;
     int center = mask_size / 2;
 
     // Alocar máscara
-    mask = (int **)malloc(mask_size * sizeof(int *));
+    int **mask = (int **)malloc(mask_size * sizeof(int *));
     for (i = 0; i < mask_size; i++)
         mask[i] = (int *)malloc(mask_size * sizeof(int));
 
     gerar_laplace_mask(mask_size, mask);
 
-    unsigned char *saida = (unsigned char *)malloc(height*width*sizeof(unsigned char));
+    unsigned char *saida = (unsigned char *)malloc(height * width * sizeof(unsigned char));
 
-    // Copiar a entrada para um buffer local para leitura segura (pois você vai sobrescrever memória compartilhada)
-    unsigned char *entrada = (unsigned char *)malloc(height * width * sizeof(unsigned char));
-    memcpy(entrada, memoria_compartilhada, height * width * sizeof(unsigned char));
+    // Calcular divisão de blocos
+    int linhas_validas = height - 2 * center;
+    int bloco = linhas_validas / n_proc;
+    int resto = linhas_validas % n_proc;
 
-    // Inicializar saída (opcional, mas bom garantir)
-    for (i = 0; i < height * width; i++) {
-        saida[i] = entrada[i];
-    }
+    int inicio = center + id_seq * bloco + (id_seq < resto ? id_seq : resto);
+    int linhas_do_processo = bloco + (id_seq < resto ? 1 : 0);
+    int fim = inicio + linhas_do_processo;
 
-    // Aplicar convolução
-    for (i = center + id_seq; i < height - center; i+=n_proc)
-    {
-        for (j = center; j < width - center; j++)
-        {
+    //printf("Processo: %d inicio: %d fim: %d linhas validas: %d bloco: %d resto: %d\n", id_seq, inicio, fim, linhas_validas, bloco, resto);
+    for (i = inicio; i < fim; i++) {
+        for (j = center; j < width - center; j++) {
             int sum = 0;
-            for (m = 0; m < mask_size; m++)
-            {
-                for (n = 0; n < mask_size; n++)
-                {
+            for (m = 0; m < mask_size; m++) {
+                for (n = 0; n < mask_size; n++) {
                     int y = i + m - center;
                     int x = j + n - center;
-                    sum += entrada[y * width + x] * mask[m][n];
+                    sum += memoria_compartilhada[y * width + x] * mask[m][n];
                 }
             }
+
+            // Clamping
             if (sum < 0)
                 sum = 0;
             if (sum > 255)
                 sum = 255;
+
             saida[i * width + j] = (unsigned char)sum;
         }
     }
 
-    // Copiar as linhas processadas de volta para memória compartilhada
-    for (i = center + id_seq; i < height - center; i += n_proc)
-    {
-        for (j = center; j < width - center; j++)
-        {
+    // Copiar de volta para a memória compartilhada
+    for (i = inicio; i < fim; i++) {
+        for (j = center; j < width - center; j++) {
             memoria_compartilhada[i * width + j] = saida[i * width + j];
         }
     }
 
-    // Liberar memória
+    // Libera a saída e máscara
     free(saida);
-    free(entrada);
-
-    // Liberar máscara
     for (i = 0; i < mask_size; i++)
-    {
         free(mask[i]);
-    }
-
     free(mask);
 }
 
