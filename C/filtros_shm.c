@@ -400,20 +400,6 @@ int main(int argc, char **argv)
     int width = header.width;
     int height = header.height;
 
-    // unsigned char **imagem_filtro_cinza = alocar_matriz(height, width);
-    // unsigned char **imagem_filtro_mediana = alocar_matriz(height, width);
-    // unsigned char **imagem_filtro_laplaciano = alocar_matriz(height, width);
-
-    // converter_escala_de_cinza(fin, imagem_filtro_cinza, height, width);
-    // filtro_mediana(imagem_filtro_cinza, imagem_filtro_mediana, height, width, n_mask);
-    // filtro_laplaciano(imagem_filtro_mediana, imagem_filtro_laplaciano, height, width, n_mask);
-
-    // escrever_imagem_saida(fout, imagem_filtro_laplaciano, height, width);
-
-    // desalocar_matriz(imagem_filtro_cinza, height);
-    // desalocar_matriz(imagem_filtro_mediana, height);
-    // desalocar_matriz(imagem_filtro_laplaciano, height);
-
 
     int shmid, chave = 5;
     int pid, id_seq;
@@ -422,16 +408,6 @@ int main(int argc, char **argv)
     shmid = shmget(chave, sizeof(unsigned char) * height * width, 0600 | IPC_CREAT);
     unsigned char *memoria_compartilhada = shmat(shmid, 0, 0); // áre de memória compartilhada é um vetor linear (1D)
 
-    // indice memoria compartilhada = [i * width + j] (linha * largura + coluna)
-    /*
-        ============== SEM PROCESSOS ===================
-        converter_escala_de_cinza(fin, memoria_compartilhada, height, width);
-        filtro_mediana(memoria_compartilhada, height, width, n_mask);
-        filtro_laplaciano(memoria_compartilhada, height, width, n_mask);
-
-        escrever_imagem_saida(fout, memoria_compartilhada, height, width);
-    
-    */
 
     RGB *imagem_rgb = malloc(sizeof(RGB) * height * width);
 	fread(imagem_rgb, sizeof(RGB), height * width, fin);
