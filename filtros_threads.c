@@ -1,12 +1,13 @@
 #include <stdio.h>
 #include <stdlib.h>
-#include <sys/shm.h>
-#include <unistd.h>
-#include <sys/wait.h>
+#include <pthread.h>
 #include <sys/sem.h>
+#include <unistd.h>
 
 #pragma pack(1)
 
+/*------------------------------------------------------------------*/
+/* STRUCTS */
 typedef struct fileheader
 {
     unsigned short type;
@@ -38,29 +39,47 @@ typedef struct rgb
     unsigned char red;
 } RGB;
 
+typedef struct parametros
+{
+    RGB *imagem_original;
+    int height;
+    int width;
+    int id_seq;
+    int n_threads;
+    int n_mask;
+} PARAMETROS;
+
+/*------------------------------------------------------------------*/
+
+/*------------------------------------------------------------------*/
+/* VARIÁVEIS GLOBAIS */
+unsigned char *IMAGEM_ATUAL;
+int barreira;
+/*------------------------------------------------------------------*/
+
 
 /*------------------------------------------------------------------*/
 /* ETAPA DO FILTRO ESCALA DE CINZA */
 
-/// @brief Converte uma imagem RGB em uma imagem em escala de cinza utilizando múltiplos processos e armazenando em uma área de memória compartilhada. 
+/// @brief Converte uma imagem RGB em uma imagem em escala de cinza utilizando múltiplas threads e armazenando na variável da imagem global.
 /// @param imagem Vetor com os valores RGB da imagem original
-/// @param memoria_compartilhada Vetor com os dados atuais da memória compartilhada
-/// @param height Altura da imagem 
+/// @param imagem_atual Vetor com os dados atuais da imagem
+/// @param height Altura da imagem
 /// @param width Largura da imagem
 /// @param id_seq Número do processo
-/// @param n_proc Quantidade total de processos
-void converter_escala_de_cinza(RGB *imagem, unsigned char *memoria_compartilhada, int height, int width, int id_seq, int n_proc)
+/// @param n_threads Quantidade total de threads
+void converter_escala_de_cinza(RGB *imagem, unsigned char *imagem_atual, int height, int width, int id_seq, int n_threads)
 {
     RGB pixel;
     int i;
     unsigned char gray_value;
-    for (i = id_seq; i < height; i += n_proc)
+    for (i = id_seq; i < height; i += n_threads)
     {
         for (int j = 0; j < width; j++)
         {
             pixel = imagem[i * width + j];
-            gray_value= 0.299 * pixel.red + 0.587 * pixel.green + 0.114 * pixel.blue;
-            memoria_compartilhada[i * width + j] = gray_value;
+            gray_value = 0.299 * pixel.red + 0.587 * pixel.green + 0.114 * pixel.blue;
+            imagem_atual[i * width + j] = gray_value;
         }
     }
 }
@@ -91,13 +110,13 @@ void bubble_sort(unsigned char *array, int size)
 
 /// @brief Aplica um filtro mediana à uma imagem em escala de cinza, suavizando-a e removendo ruídos.
 /// @param entrada Vetor com os dados da imagem em escala de cinza
-/// @param memoria_compartilhada Vetor com os dados atuais da memória compartilhada
-/// @param height Altura da imagem 
+/// @param imagem_atual Vetor com os dados atuais da imagem
+/// @param height Altura da imagem
 /// @param width Largura da imagem
 /// @param n_mask Tamanho da máscara
 /// @param id_seq Número do processo
-/// @param n_proc Quantidade total de processos
-void filtro_mediana(unsigned char *entrada, unsigned char *memoria_compartilhada, int height, int width, int n_mask, int id_seq, int n_proc)
+/// @param n_threads Quantidade total de threads
+void filtro_mediana(unsigned char *entrada, unsigned char *imagem_atual, int height, int width, int n_mask, int id_seq, int n_threads)
 {
     int index, y, x;
     int mask_y, mask_x, mask_index;
@@ -109,7 +128,7 @@ void filtro_mediana(unsigned char *entrada, unsigned char *memoria_compartilhada
     unsigned char *mask_array = (unsigned char *)malloc(size_mask_array * sizeof(unsigned char));
     unsigned char *saida = (unsigned char *)malloc(height * width * sizeof(unsigned char));
 
-    for (index = id_seq; index < height * width; index += n_proc)
+    for (index = id_seq; index < height * width; index += n_threads)
     {
         y = index / width; // coordenada Y da imagem
         x = index % width; // coordenada X da imagem
@@ -138,21 +157,19 @@ void filtro_mediana(unsigned char *entrada, unsigned char *memoria_compartilhada
     }
 
     // Cópia segura do resultado para a memória compartilhada
-    for (index = id_seq; index < height * width; index += n_proc)
+    for (index = id_seq; index < height * width; index += n_threads)
     {
-        memoria_compartilhada[index] = saida[index];
+        imagem_atual[index] = saida[index];
     }
 
     free(mask_array);
     free(saida);
 }
 
-
-
 /*------------------------------------------------------------------*/
 /* FILTRO LAPLACIANO */
 
-/// @brief Gera uma máscara padrão com base no tamanho informado. O ponto central da máscara é o próprio tamanho e seus vizinhos são -1; 
+/// @brief Gera uma máscara padrão com base no tamanho informado. O ponto central da máscara é o próprio tamanho e seus vizinhos são -1;
 /// @param size Tamanho da máscara
 /// @param mask Matriz da máscara
 void gerar_laplace_mask(int size, int **mask)
@@ -166,13 +183,13 @@ void gerar_laplace_mask(int size, int **mask)
 
 /// @brief Aplica um filtro laplaciano em uma imagem, destacando as bordas do conteúdo.
 /// @param entrada Vetor com os dados da imagem a ser filtrada
-/// @param memoria_compartilhada Vetor com os dados atuais da memória compartilhada
-/// @param height Altura da imagem 
+/// @param imagem_atual Vetor com os dados atuais da imagem
+/// @param height Altura da imagem
 /// @param width Largura da imagem
 /// @param n_mask Tamanho da máscara
 /// @param id_seq Número do processo
-/// @param n_proc Quantidade total de processos
-void filtro_laplaciano(unsigned char *entrada, unsigned char *memoria_compartilhada, int height, int width, int mask_size, int id_seq, int n_proc)
+/// @param n_threads Quantidade total de threads
+void filtro_laplaciano(unsigned char *entrada, unsigned char *imagem_atual, int height, int width, int mask_size, int id_seq, int n_threads)
 {
     int i, j;
     int total_pixels = height * width;
@@ -191,33 +208,38 @@ void filtro_laplaciano(unsigned char *entrada, unsigned char *memoria_compartilh
         mask[i] = (int *)malloc(mask_size * sizeof(int));
 
     // Preencher a máscara conforme o tamanho
-    if (mask_size == 3) {
+    if (mask_size == 3)
+    {
         int template_mask[3][3] = {
-            { 0, -1, 0 },
-            { -1, 4, -1},
-            { 0, -1, 0 }
-        };
-        for (i = 0; i < mask_size; i++){
-            for (j = 0; j < mask_size; j++){
+            {0, -1, 0},
+            {-1, 4, -1},
+            {0, -1, 0}};
+        for (i = 0; i < mask_size; i++)
+        {
+            for (j = 0; j < mask_size; j++)
+            {
                 mask[i][j] = template_mask[i][j];
-            }    
+            }
         }
-            
-    } else if (mask_size == 5) {
+    }
+    else if (mask_size == 5)
+    {
         int template_mask[5][5] = {
-            {  0,  0, -1,  0,  0 },
-            {  0, -1, -2, -1,  0 },
-            { -1, -2, 16, -2, -1 },
-            {  0, -1, -2, -1,  0 },
-            {  0,  0, -1,  0,  0 }
-        };
-        for (i = 0; i < mask_size; i++){
-            for (j = 0; j < mask_size; j++){
+            {0, 0, -1, 0, 0},
+            {0, -1, -2, -1, 0},
+            {-1, -2, 16, -2, -1},
+            {0, -1, -2, -1, 0},
+            {0, 0, -1, 0, 0}};
+        for (i = 0; i < mask_size; i++)
+        {
+            for (j = 0; j < mask_size; j++)
+            {
                 mask[i][j] = template_mask[i][j];
-            }    
+            }
         }
-
-    } else if (mask_size == 7) {
+    }
+    else if (mask_size == 7)
+    {
         // mascara padrão (resultado ruim)
         // int template_mask[7][7] = {
         //     {  0,  0,  0, -1,  0,  0,  0 },
@@ -242,41 +264,47 @@ void filtro_laplaciano(unsigned char *entrada, unsigned char *memoria_compartilh
 
         // mascara mais suave (resultado bom)
         int template_mask[7][7] = {
-            { 0,  0,  -1,  -1,  -1,  0,  0 },
-            { 0, -1,  -3,  -3,  -3, -1,  0 },
-            {-1, -3,   0,   7,   0, -3, -1 },
-            {-1, -3,   7,  24,   7, -3, -1 },
-            {-1, -3,   0,   7,   0, -3, -1 },
-            { 0, -1,  -3,  -3,  -3, -1,  0 },
-            { 0,  0,  -1,  -1,  -1,  0,  0 }
-        };
+            {0, 0, -1, -1, -1, 0, 0},
+            {0, -1, -3, -3, -3, -1, 0},
+            {-1, -3, 0, 7, 0, -3, -1},
+            {-1, -3, 7, 24, 7, -3, -1},
+            {-1, -3, 0, 7, 0, -3, -1},
+            {0, -1, -3, -3, -3, -1, 0},
+            {0, 0, -1, -1, -1, 0, 0}};
 
-
-        for (i = 0; i < mask_size; i++){
-            for (j = 0; j < mask_size; j++){
+        for (i = 0; i < mask_size; i++)
+        {
+            for (j = 0; j < mask_size; j++)
+            {
                 mask[i][j] = template_mask[i][j];
-            }    
+            }
         }
-    } else {
+    }
+    else
+    {
         fprintf(stderr, "Tamanho de máscara inválido: %d\n", mask_size);
-        for (i = 0; i < mask_size; i++) free(mask[i]);
+        for (i = 0; i < mask_size; i++)
+            free(mask[i]);
         free(mask);
         return;
     }
 
-    for (index = id_seq; index < total_pixels; index += n_proc) {
+    for (index = id_seq; index < total_pixels; index += n_threads)
+    {
         y = index / width; // coordenada y da imagem
         x = index % width; // coordenada x da imagem
 
         // aplica a convolução
         valor_pixel = 0;
-        for (mask_y = 0; mask_y < mask_size; mask_y++) {
-            for (mask_x = 0; mask_x < mask_size; mask_x++) {
+        for (mask_y = 0; mask_y < mask_size; mask_y++)
+        {
+            for (mask_x = 0; mask_x < mask_size; mask_x++)
+            {
 
                 // coordenadas dos vizinhos
                 y_vizinho = y + mask_y - pixel_central_mask;
                 x_vizinho = x + mask_x - pixel_central_mask;
-                
+
                 // verifica se os vizinhos estão dentro da imagem
                 if (x_vizinho >= 0 && x_vizinho < width && y_vizinho >= 0 && y_vizinho < height)
                     valor_pixel += entrada[y_vizinho * width + x_vizinho] * mask[mask_y][mask_x];
@@ -284,15 +312,17 @@ void filtro_laplaciano(unsigned char *entrada, unsigned char *memoria_compartilh
         }
 
         // Clamping
-        if (valor_pixel < 0) valor_pixel = 0;
-        if (valor_pixel > 255) valor_pixel = 255;
+        if (valor_pixel < 0)
+            valor_pixel = 0;
+        if (valor_pixel > 255)
+            valor_pixel = 255;
 
         saida[y * width + x] = (unsigned char)valor_pixel;
     }
 
-    for (index = id_seq; index < height * width; index += n_proc)
+    for (index = id_seq; index < height * width; index += n_threads)
     {
-        memoria_compartilhada[index] = saida[index];
+        imagem_atual[index] = saida[index];
     }
 
     // Liberar memória
@@ -301,23 +331,21 @@ void filtro_laplaciano(unsigned char *entrada, unsigned char *memoria_compartilh
     free(mask);
 }
 
-
-
 /*------------------------------------------------------------------*/
 
 /// @brief Escreve a imagem de saída em um arquivo.
 /// @param fout Arquivo de saída
-/// @param memoria_compartilhada Área de memória compartilhada que contém a imagem
+/// @param imagem_atual Vetor global que contém a imagem a ser gravada
 /// @param height Altura da imagem
 /// @param width Largura da imagem
-void escrever_imagem_saida(FILE *fout, unsigned char *memoria_compartilhada, int height, int width)
+void escrever_imagem_saida(FILE *fout, unsigned char *imagem_atual, int height, int width)
 {
     RGB pixel;
     for (int i = 0; i < height; i++)
     {
         for (int j = 0; j < width; j++)
         {
-            pixel.red = pixel.green = pixel.blue = memoria_compartilhada[i * width + j];
+            pixel.red = pixel.green = pixel.blue = imagem_atual[i * width + j];
             fwrite(&pixel, sizeof(RGB), 1, fout);
         }
     }
@@ -355,6 +383,64 @@ void esperar_todos_chegarem(int id_barreira, int num_etapa, int total)
 
 /*------------------------------------------------------------------*/
 
+void * aplicar_filtros(void *args)
+{
+    PARAMETROS *parametros = (PARAMETROS *)args;
+
+    RGB *imagem_original = parametros->imagem_original;
+    int height = parametros->height;
+    int width = parametros->width;
+    int id_seq = parametros->id_seq;
+    int n_threads = parametros->n_threads;
+    int n_mask = parametros->n_mask;
+
+    int i;
+
+    // filtro cinza
+    converter_escala_de_cinza(imagem_original, IMAGEM_ATUAL, height, width, id_seq, n_threads);
+    // sinaliza chegada
+    sinalizar_chegada(barreira, 0);
+    // espera todos chegarem
+    esperar_todos_chegarem(barreira, 0, n_threads);
+    printf("Escala de Cinza Finalizada - THREAD %d\n", id_seq);
+
+    // Copia a variável global para um vetor para evitar condições de corrida entre threads durante o processamento do próximo filtro
+    unsigned char *imagem_cinza = malloc(sizeof(unsigned char) * width * height);
+    for (i = 0; i < height * width; i++)
+    {
+        imagem_cinza[i] = IMAGEM_ATUAL[i];
+    }
+
+    // filtro mediana
+    filtro_mediana(imagem_cinza, IMAGEM_ATUAL, height, width, n_mask, id_seq, n_threads);
+    // sinaliza chegada
+    sinalizar_chegada(barreira, 1);
+    // espera todos chegarem
+    esperar_todos_chegarem(barreira, 1, n_threads);
+    printf("Mediana Finalizada - THREAD %d\n", id_seq);
+
+    // Copia a variável global para um vetor para evitar condições de corrida entre threads durante o processamento do próximo filtro
+    unsigned char *imagem_pos_mediana = malloc(sizeof(unsigned char) * width * height);
+    for (i = 0; i < height * width; i++)
+    {
+        imagem_pos_mediana[i] = IMAGEM_ATUAL[i];
+    }
+
+    // filtro laplace
+    filtro_laplaciano(imagem_pos_mediana, IMAGEM_ATUAL, height, width, n_mask, id_seq, n_threads);
+    // sinaliza chegada
+    sinalizar_chegada(barreira, 2);
+    // espera todos chegarem
+    esperar_todos_chegarem(barreira, 2, n_threads);
+    printf("Laplaciano Finalizado - Processo %d\n", id_seq);
+
+    // Liberando variáveis
+    free(imagem_cinza);
+    free(imagem_pos_mediana);
+}
+
+/*------------------------------------------------------------------*/
+
 int main(int argc, char **argv)
 {
 
@@ -363,9 +449,9 @@ int main(int argc, char **argv)
 
 
         1. Leitura de um arquivo de imagem .BMP RGB de 24 bits.
-        2. Aplicar filtro de escala de cinza, mediana e laplaciano na imagem utilizando múltiplos processos e área de memória compartilhada.
+        2. Aplicar filtro de escala de cinza, mediana e laplaciano na imagem utilizando múltiplas threads.
         3. Barreira de sincronização com semáforos para garantir que um filtro só começe quando o anterior ser finalizado.
-        4. Ao final, o processo pai espera os filhos terminarem sua execução para ler a área de memória compartilhada e armazenar o resultado em uma imagem de saída.
+        4. Ao final, armazenar o resultado em uma imagem de saída.
 
     */
 
@@ -373,19 +459,19 @@ int main(int argc, char **argv)
     IMAGEHEADER header;
     RGB pixel;
     int i, j;
-    int n_mask, n_proc;
+    int n_mask, n_threads;
 
     // Parâmetros de entrada
     if (argc != 3)
     {
-        printf("%s <n_mask> <n_proc>\n", argv[0]);
+        printf("%s <n_mask> <n_threads>\n", argv[0]);
         exit(0);
     }
 
     n_mask = atoi(argv[1]);
-    n_proc = atoi(argv[2]);
+    n_threads = atoi(argv[2]);
 
-    printf("n_mask: %d\nn_proc: %d\n", n_mask, n_proc);
+    printf("n_mask: %d\nn_threads: %d\n", n_mask, n_threads);
 
     // Nome do arquivo de entrada
     char entrada[100] = "borboleta.bmp\0";
@@ -407,19 +493,20 @@ int main(int argc, char **argv)
     int width = header.width;
     int height = header.height;
 
+    
+    // ===================== BARREIRA DE SINCRONIZAÇÃO ===================
 
     // Definindo a barreira de sincronização com semáforos
-    int barreira = semget(1234, 3, IPC_CREAT | 0600); // criando semaforo com 3 posicoes
-    semctl(barreira, 0, SETVAL, 0);                   // Inicializa etapa 1 (escala de cinza) com 0
-    semctl(barreira, 1, SETVAL, 0);                   // Inicializa etapa 2 (mediana) com 0
-    semctl(barreira, 2, SETVAL, 0);                   // Inicializa etapa 3 (laplaciano) com 0
+    barreira = semget(1234, 3, IPC_CREAT | 0600); // criando semaforo com 3 posicoes
+    semctl(barreira, 0, SETVAL, 0);               // Inicializa etapa 1 (escala de cinza) com 0
+    semctl(barreira, 1, SETVAL, 0);               // Inicializa etapa 2 (mediana) com 0
+    semctl(barreira, 2, SETVAL, 0);               // Inicializa etapa 3 (laplaciano) com 0
 
-    // Criando a área de memória compartilhada
-    int shmid, chave = 5;
-    int pid, id_seq;
+    // ===================================================================
 
-    shmid = shmget(chave, sizeof(unsigned char) * height * width, 0600 | IPC_CREAT);
-    unsigned char *memoria_compartilhada = shmat(shmid, 0, 0);
+
+    // Inicializa a variavel da imagem global
+    IMAGEM_ATUAL = malloc(sizeof(unsigned char) * height * width);
 
     // Transferindo a imagem para um vetor e inicializando a memória compartilhada com valores em 0
     RGB *imagem_original = malloc(sizeof(RGB) * height * width);
@@ -429,104 +516,58 @@ int main(int argc, char **argv)
         {
             fread(&pixel, sizeof(RGB), 1, fin);
             imagem_original[i * width + j] = pixel;
-            memoria_compartilhada[i*width+j] = 0;
+            IMAGEM_ATUAL[i * width + j] = 0;
         }
     }
     fclose(fin);
 
+    // ===================== THREADS ===================
+    pthread_t *tid = NULL;
+    PARAMETROS *parametros = NULL;
 
-    // Criando os processos
-    id_seq = 0;
-    for (int i = 0; i < n_proc; i++)
+    tid = (pthread_t *)malloc(n_threads * sizeof(pthread_t));
+    parametros = (PARAMETROS *)malloc(n_threads * sizeof(PARAMETROS));
+
+    for (i = 0; i < n_threads; i++)
     {
-        pid = fork();
-        if (pid == 0)
-        {
-            id_seq = i;
-            break;
-        }
+        parametros[i].imagem_original = imagem_original;
+        parametros[i].height = height;
+        parametros[i].width = width;
+        parametros[i].id_seq = i;
+        parametros[i].n_threads = n_threads;
+        parametros[i].n_mask = n_mask;
+        pthread_create(&tid[i], NULL, aplicar_filtros, (void *) &parametros[i]);
     }
 
-    if (pid == 0)
+    for (i = 0; i < n_threads; i++)
     {
-        printf("Processo filho: %d\n", id_seq);
+        pthread_join(tid[i], NULL);
+    }
+    // =================================================
 
-        // Filtro escala de cinza
-        converter_escala_de_cinza(imagem_original, memoria_compartilhada, height, width, id_seq, n_proc);
-        sinalizar_chegada(barreira, 0);
-        esperar_todos_chegarem(barreira, 0, n_proc);
-        printf("Escala de Cinza Finalizada - Processo %d\n", id_seq);
-
-        // Copia a área de memória compartilhada para um vetor para evitar condições de corrida entre processos durante o processamento do próximo filtro
-        unsigned char *imagem_cinza = malloc(sizeof(unsigned char) * width *height);
-        for(i = 0; i < height*width;i++){
-            imagem_cinza[i] = memoria_compartilhada[i];
-        }
-
-        // Filtro mediana
-        filtro_mediana(imagem_cinza, memoria_compartilhada, height, width, n_mask, id_seq, n_proc);
-        sinalizar_chegada(barreira, 1);
-        esperar_todos_chegarem(barreira, 1, n_proc);
-        printf("Mediana Finalizada - Processo %d\n", id_seq);
-
-        // Copia a área de memória compartilhada para um vetor para evitar condições de corrida entre processos durante o processamento do próximo filtro
-        unsigned char *imagem_pos_mediana = malloc(sizeof(unsigned char) * width * height);
-        for (i = 0; i < height * width; i++) {
-            imagem_pos_mediana[i] = memoria_compartilhada[i];
-        }
-        
-        // Filtro laplaciano
-        filtro_laplaciano(imagem_pos_mediana, memoria_compartilhada, height, width, n_mask, id_seq, n_proc);
-        sinalizar_chegada(barreira, 2);
-        esperar_todos_chegarem(barreira, 2, n_proc);
-        printf("Laplaciano Finalizado - Processo %d\n", id_seq);
-
-        // Liberando variáveis
-        free(imagem_cinza);
-        free(imagem_pos_mediana);
-        shmdt(memoria_compartilhada);
+    // Preparando o arquivo de saída
+    FILE *fout = fopen(saida, "wb");
+    if (fout == NULL)
+    {
+        printf("Erro ao abrir o arquivo %s\n", saida);
         exit(0);
     }
-    else
-    {
-        // Espera os processos filhos terminarem
-        for (int i = 0; i < n_proc; i++)
-        {
-            printf("Esperando processo %d\n", i);
-            wait(NULL);
-        }
 
-        printf("processos finalizados\n");
+    fread(&file_header, sizeof(FILEHEADER), 1, fin);
+    fread(&header, sizeof(IMAGEHEADER), 1, fin);
 
-        // Preparando o arquivo de saída
-        FILE *fout = fopen(saida, "wb");
-        if (fout == NULL)
-        {
-            printf("Erro ao abrir o arquivo %s\n", saida);
-            exit(0);
-        }
+    printf("Tamanho da imagem: %u\n", file_header.size_file);
+    printf("Largura: %d\n", header.width);
+    printf("Altura: %d\n", header.height);
+    printf("Bits por pixel: %d\n", header.bits_per_pixel);
 
-        fread(&file_header, sizeof(FILEHEADER), 1, fin);
-        fread(&header, sizeof(IMAGEHEADER), 1, fin);
+    fwrite(&file_header, sizeof(FILEHEADER), 1, fout);
+    fwrite(&header, sizeof(IMAGEHEADER), 1, fout);
 
-        printf("Tamanho da imagem: %u\n", file_header.size_file);
-        printf("Largura: %d\n", header.width);
-        printf("Altura: %d\n", header.height);
-        printf("Bits por pixel: %d\n", header.bits_per_pixel);
+    // Armazenando o conteúdo da variável global na saída
+    escrever_imagem_saida(fout, IMAGEM_ATUAL, height, width);
 
-        fwrite(&file_header, sizeof(FILEHEADER), 1, fout);
-        fwrite(&header, sizeof(IMAGEHEADER), 1, fout);
-
-        printf("pid pai = %d\n", pid);
-        // Armazenando o conteúdo da área de memória compartilhada na saída
-        escrever_imagem_saida(fout, memoria_compartilhada, height, width);
-
-        fclose(fout);
-
-        // Liberando variáveis
-        free(imagem_original);
-        semctl(barreira, 0, IPC_RMID);
-        shmdt(memoria_compartilhada);
-        shmctl(shmid, IPC_RMID, 0);
-    }
+    fclose(fout);
+    free(imagem_original);
+    free(IMAGEM_ATUAL);
 }
